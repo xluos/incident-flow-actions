@@ -1,0 +1,34 @@
+{
+  "name": "@botmux-ai/plugin-incident-flow-actions",
+  "version": "0.1.0",
+  "description": "Botmux plugin: Incident Flow Actions.",
+  "type": "module",
+  "scripts": {
+    "build": "node ./scripts/build.mjs",
+    "validate": "node ./scripts/validate.mjs",
+    "test": "node --test && npm run build && npm run validate",
+    "prepublishOnly": "npm test"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0"
+  },
+  "files": [
+    "dist/"
+  ],
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "license": "MIT",
+  "keywords": [
+    "botmux-plugin"
+  ],
+  "botmux": {
+    "schemaVersion": 1,
+    "service": {
+      "mode": "auto"
+    },
+    "id": "incident-flow-actions",
+    "displayName": "Incident Flow Actions"
+  }
+}

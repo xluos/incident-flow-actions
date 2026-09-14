@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "actionPrefixes": ["incident.flow."],
+  "endpoint": "/botmux/card-actions/v1"
+}
