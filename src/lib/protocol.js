@@ -43,6 +43,7 @@ export function verifyActionSignature(actionName, encodedPayload, signature, sec
 }
 
 export function validatePayload(payload, now = Date.now()) {
+  if (payload.actionsHash !== undefined && !/^[a-f0-9]{64}$/.test(payload.actionsHash)) throw new Error('invalid_actionsHash');
   if (payload.schemaVersion !== 1) throw new Error('unsupported_payload_schema');
   for (const key of ['cardId', 'incidentId', 'sessionId', 'chatId', 'larkAppId']) {
     if (typeof payload[key] !== 'string' || !SAFE_ID.test(payload[key])) throw new Error(`invalid_${key}`);

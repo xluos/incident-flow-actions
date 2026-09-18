@@ -1,16 +1,36 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { ACTION_META } from './protocol.js';
+import { ACTION_PREFIX } from './protocol.js';
+import { DEFAULT_ACTIONS, normalizeActions } from './config.js';
 
-export function continuationInstruction(actionName) {
-  const action = ACTION_META[actionName]?.key;
-  if (!action) throw new Error('unknown_action');
-  return action === 'confirm'
-    ? '用户已确认故障结论。记录确认，完成必要收尾，并结束本次故障处理。'
-    : action === 'repair'
-      ? '用户已明确授权修复。记录授权，按故障修复流程继续；仍需遵守现有发布、Review 和验证门禁。'
-      : '用户要求继续排查。保持故障未关闭，基于现有证据继续诊断并汇报新的结论。';
+function selectedAction(actionName, configured) {
+  const action = configured ?? DEFAULT_ACTIONS.find(item => ACTION_PREFIX + item.id === actionName);
+  if (!action || ACTION_PREFIX + action.id !== actionName) throw new Error('unknown_action');
+  return normalizeActions([action])[0];
+}
+
+export function continuationInstruction(actionName, action) {
+  return selectedAction(actionName, action).instruction;
+}
+
+async function resolveTarget(action, payload, dashboard, fetchImpl) {
+  if (!action.target) return { kind: 'turn', botId: payload.larkAppId, sessionId: payload.sessionId };
+  const response = await fetchImpl(`${dashboard.base}/api/sessions`, {
+    headers: { cookie: `botmux_dashboard_token=${dashboard.token}` },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) throw new Error('target_sessions_unavailable');
+  const body = await response.json();
+  const sessions = Array.isArray(body) ? body : body.sessions;
+  if (!Array.isArray(sessions)) throw new Error('target_sessions_invalid');
+  const candidates = sessions.filter(session => session.larkAppId === action.target.botId
+    && session.chatId === payload.chatId
+    && session.scope === payload.sessionScope
+    && (payload.sessionScope !== 'thread' || session.rootMessageId === payload.rootMessageId)
+    && (!action.target.sessionId || session.sessionId === action.target.sessionId));
+  if (candidates.length !== 1) throw new Error('target_session_missing_or_ambiguous');
+  return { kind: 'turn', botId: action.target.botId, sessionId: candidates[0].sessionId };
 }
 
 function readTrimmed(path) {
@@ -34,9 +54,10 @@ function dashboardAccess(deps) {
 export async function enqueueContinuation(input, deps = {}) {
   const fetchImpl = deps.fetch ?? fetch;
   const { payload } = input;
-  const action = ACTION_META[input.actionName]?.key;
-  if (!action) throw new Error('unknown_action');
+  const definition = selectedAction(input.actionName, input.action);
+  const action = definition.id;
   const dashboard = dashboardAccess(deps);
+  const target = await resolveTarget(definition, payload, dashboard, fetchImpl);
   const request = {
     source: {
       type: 'ui',
@@ -44,23 +65,23 @@ export async function enqueueContinuation(input, deps = {}) {
       requestId: `incident-action:${input.eventId}`,
       receivedAt: new Date().toISOString(),
     },
-    target: {
-      kind: 'turn',
-      botId: payload.larkAppId,
-      sessionId: payload.sessionId,
-    },
+    target,
     envelope: {
       format: 'incident_flow_action.v1',
       sourceName: 'Incident Flow Actions',
       trusted: false,
       payload: {
         incident_id: payload.incidentId,
+        source_bot_id: payload.larkAppId,
+        source_session_id: payload.sessionId,
+        source_chat_id: payload.chatId,
+        action_label: definition.label,
         action,
         verified_operator_open_id: input.operatorId,
         event_id: input.eventId,
       },
     },
-    instruction: continuationInstruction(input.actionName),
+    instruction: continuationInstruction(input.actionName, definition),
     presentation: { topicMessage: null },
     options: {
       asyncReturnSessionId: true,
@@ -82,6 +103,6 @@ export async function enqueueContinuation(input, deps = {}) {
   }
   return {
     triggerId: body.triggerId ?? null,
-    sessionId: body.target?.sessionId ?? body.async?.sessionId ?? payload.sessionId,
+    sessionId: body.target?.sessionId ?? body.async?.sessionId ?? target.sessionId,
   };
 }

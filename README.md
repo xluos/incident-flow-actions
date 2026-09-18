@@ -2,7 +2,7 @@
 
 `@botmux-ai/plugin-incident-flow-actions` adds workflow actions to incident-result cards without changing Botmux core.
 
-It provides three incident-specific actions: `确认结论`, `授权修复`, and `继续排查`. The callback service verifies the Botmux gateway token, an HMAC-bound card payload, the original message binding, and the verified operator. The first valid choice locks the card and injects a structured continuation directly into the original Botmux session through the local Trigger API.
+The default preset provides `确认结论`, `授权修复`, and `继续排查`. Button order, labels, styles, confirmation dialogs, continuation instructions and target bots are configurable per bot. The callback service verifies the Botmux gateway token, an HMAC-bound card payload, the original message binding, and the verified operator. The first valid choice locks the card and injects a structured continuation directly into the original Botmux session through the local Trigger API.
 
 ## Contract
 
@@ -59,3 +59,50 @@ enabled in the same machine or Bot scope before this plugin can be enabled.
 Botmux does not add namespaces to commands or skills. Authors own their names.
 Runtime worker/daemon hooks are intentionally outside the current template and
 remain a later extension.
+
+## Configure action profiles
+
+Start with `examples/workflow-config.json`, replace the example App IDs, and use:
+
+```bash
+botmux incident-flow-actions:config --file /absolute/path/workflow-config.json
+botmux incident-flow-actions:config --file /absolute/path/workflow-config.json --apply
+botmux incident-flow-actions:config --bot cli_YOUR_INCIDENT_APP
+botmux plugin enable incident-flow-actions --bot "YOUR_BOT_NAME"
+```
+
+`defaultProfile: null` makes the configuration opt-in by App ID. A string selects
+an inherited profile for bots without an override. Each bot has `enabled` and an
+optional `profile`. Plugin enablement in Botmux is a separate gate; global
+plugin enablement is additive, so prefer bot-scoped enablement for selected bots.
+The configuration command does not expose or overwrite the signing secret.
+For a bot-scoped install, Botmux exposes plugin commands only inside that bot's
+managed sessions. From the host shell use the standalone configuration entry:
+
+```bash
+node ~/.botmux/plugins/incident-flow-actions/dist/cli/configure.js --file /absolute/path/workflow-config.json --apply
+```
+
+It uses the same validation and preserves unrelated config including the signing
+key. Changes take effect for newly sent cards without restarting the plugin service.
+
+Each profile has 1–5 ordered actions with `id`, `label`, `style` (`default`,
+`primary`, `danger`), and `instruction`. Optional `confirmation: {title, text}`
+controls the dialog. Optional `target: {botId, sessionId?}` dispatches to that bot's
+existing session in the **same chat and scope/topic**. With no session ID, exactly
+one matching session is required. Missing or ambiguous sessions fail visibly;
+no unrelated session or new project is selected. Omit `target` to continue the
+original session. Instructions are data, never shell commands. Cross-bot operator
+open IDs retain their source app context and are audit data, not target credentials.
+
+`send --profile <name>` selects a configured profile; `send --dry-run` generates
+preview JSON without posting a message or persisting a signing key. Sending still
+requires a managed session. The sending bot is that session's bot; target only
+controls who receives the continuation after the click.
+
+Cards store an action snapshot whose hash is included in the signed payload.
+Editing a profile cannot silently change a previously sent button's behavior.
+Legacy cards retain the original three actions. Existing HMAC verification,
+message binding, allowed-operator checks and one-choice idempotency remain in
+place. A successful click means the continuation was accepted, not that the
+business task has completed.
