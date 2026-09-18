@@ -106,3 +106,9 @@ Legacy cards retain the original three actions. Existing HMAC verification,
 message binding, allowed-operator checks and one-choice idempotency remain in
 place. A successful click means the continuation was accepted, not that the
 business task has completed.
+
+### Dashboard 配置页面
+
+在 Botmux 插件列表进入 Incident Flow Actions，可编辑按钮方案（1–5 个按钮）、顺序、文字、样式、二次确认、点击指令与接手机器人，并给不同机器人绑定方案。保存后新卡片立即使用新配置，旧卡片仍使用发送时的快照。插件的启用范围仍在插件列表按机器人设置。
+
+此页面要求宿主向插件提供 `api.react`、`api.getSettings()`、`api.saveSettings(value)` 和 `api.listBots()`。服务端通过 `dist/server/settings.js` 适配器验证并读写 `workflowConfig`，不向浏览器返回插件签名密钥。旧版宿主会显示升级提示。

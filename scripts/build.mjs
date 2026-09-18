@@ -138,6 +138,7 @@ mkdirSync(outputRoot, { recursive: true });
 writeFileSync(join(outputRoot, 'package.json'), JSON.stringify({ private: true, type: 'module' }, null, 2) + '\n');
 
 await Promise.all([
+  bundleNode(join(sourceRoot, 'server', 'settings.js'), join(outputRoot, 'server', 'settings.js')),
   bundleNode(join(sourceRoot, 'cli', 'index.js'), join(outputRoot, 'cli', 'index.js')),
   bundleNode(join(sourceRoot, 'cli', 'configure.js'), join(outputRoot, 'cli', 'configure.js')),
   bundleNode(join(sourceRoot, 'mcp', 'server.js'), join(outputRoot, 'mcp', 'server.js')),
