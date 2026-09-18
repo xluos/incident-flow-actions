@@ -1,3 +1,14 @@
+const errors = {
+  invalid_or_duplicate_action_id: '按钮标识重复或格式不正确。请使用小写字母开头的字母、数字、- 或 _。',
+  invalid_action_instruction: '请填写每个按钮点击后要发送的指令（最多 8000 字）。',
+  invalid_action_label: '请填写按钮文字（最多 40 字）。',
+  invalid_confirmation_title: '请填写二次确认的标题（最多 80 字）。',
+  invalid_confirmation_text: '请填写二次确认的内容（最多 500 字）。',
+  invalid_target_sessionId: '会话 ID 格式不正确，请使用实际的会话 ID。',
+  actions_must_have_1_to_5_buttons: '每个方案需要 1–5 个按钮。',
+  bot_profile_required: '请为启用的机器人选择按钮方案。',
+};
+
 export default function PluginDashboard({ api }) {
   if (!api.react || !api.getSettings) return '请先更新 Botmux：当前版本缺少插件配置页面接口。';
   const { createElement: h, useState, useEffect } = api.react;
@@ -37,7 +48,7 @@ export default function PluginDashboard({ api }) {
       const result = await api.saveSettings({ workflowConfig: config });
       setConfig(result.workflowConfig); setSaved(JSON.stringify(result.workflowConfig));
       setMessage('已保存。新发送的卡片使用此配置，已有卡片保留原来的按钮行为。');
-    } catch (error) { setMessage(`保存失败：${error.message}`); }
+    } catch (error) { setMessage(`保存失败：${errors[error.message] || error.message}`); }
     finally { setBusy(false); }
   }
   if (!config) return h('p', { role: 'status' }, message || '正在读取按钮配置…');
