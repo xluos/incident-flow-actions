@@ -15,7 +15,11 @@ import {
 } from '../src/lib/protocol.js';
 import { writeCardBinding } from '../src/lib/storage.js';
 import { createIncidentActionHandler, isMainModule } from '../src/service/server.js';
-import { buildSendMentionArgs } from '../src/cli/index.js';
+import {
+  applyOwnerIdentity,
+  buildOwnerMentionArgs,
+  buildSendMentionArgs,
+} from '../src/cli/index.js';
 
 const SECRET = 'test-signing-secret-that-is-long-enough';
 const TOKEN = 'private-gateway-token';
@@ -77,7 +81,7 @@ async function withHandler(t, setup = {}) {
     pluginHome: home,
     token: TOKEN,
     signingSecret: SECRET,
-    enqueue: setup.enqueue ?? (async () => ({ taskId: 'task-1' })),
+    enqueue: setup.enqueue ?? (async () => ({ triggerId: 'trigger-1', sessionId: payload.sessionId })),
   });
   const server = createServer(handler);
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -120,6 +124,38 @@ test('incident card forwards explicit recipients and mention-back to botmux send
   assert.deepEqual(buildSendMentionArgs([]), ['--no-mention']);
 });
 
+test('incident card derives owner rendering and mention from one identity artifact', () => {
+  const owner = {
+    name: '汪睿麟',
+    query: 'wangruilin.bruce@bytedance.com',
+    mention_display_name: '汪睿麟',
+    mention_status: 'resolved',
+    mention_arg: 'wangruilin.bruce@bytedance.com:汪睿麟',
+  };
+  const card = createSimpleResultCard({ title: '结论', summary: '**修复负责人：** {{repair_owner}}' });
+
+  assert.match(applyOwnerIdentity(card, owner).elements[0].content, /@汪睿麟/);
+  assert.deepEqual(buildOwnerMentionArgs(owner), [
+    '--mention', 'wangruilin.bruce@bytedance.com:汪睿麟',
+  ]);
+  assert.deepEqual(buildSendMentionArgs([], buildOwnerMentionArgs(owner)), [
+    '--mention', 'wangruilin.bruce@bytedance.com:汪睿麟',
+  ]);
+});
+
+test('incident card renders unresolved owner without inventing a mention', () => {
+  const owner = {
+    name: '张三',
+    query: '张三',
+    mention_display_name: 'unknown',
+    mention_status: 'ambiguous',
+  };
+  const card = createSimpleResultCard({ title: '结论', summary: '**修复负责人：** {{repair_owner}}' });
+
+  assert.match(applyOwnerIdentity(card, owner).elements[0].content, /未通知：ambiguous/);
+  assert.deepEqual(buildOwnerMentionArgs(owner), []);
+});
+
 test('service entry detection follows installed symlinks', t => {
   const home = mkdtempSync(join(tmpdir(), 'incident-service-entry-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
@@ -141,7 +177,7 @@ test('repair action has a confirmation dialog and locked cards remove every acti
   assert.match(locked.elements.at(-1).content, /授权修复/);
 });
 
-test('continuation uses fixed execFile arguments and preserves the original topic', async () => {
+test('continuation triggers the original session directly without creating a schedule', async () => {
   const calls = [];
   const result = await enqueueContinuation({
     actionName: ACTIONS.continue,
@@ -149,21 +185,48 @@ test('continuation uses fixed execFile arguments and preserves the original topi
     operatorId: 'ou_allowed123',
     eventId: 'evt-1',
   }, {
-    binary: '/usr/local/bin/botmux',
-    run: async (binary, args, options) => {
-      calls.push({ binary, args, options });
-      return { stdout: calls.length === 1 ? '✅ 已创建定时任务 [task-abc] x\n' : 'ok\n', stderr: '' };
+    dashboardBase: 'http://127.0.0.1:7891',
+    dashboardToken: 'dashboard-token',
+    fetch: async (url, init) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify({
+        ok: true,
+        triggerId: 'trigger-abc',
+        target: { kind: 'turn', sessionId: 'session-123' },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
     },
   });
-  assert.equal(result.taskId, 'task-abc');
-  assert.equal(calls.length, 2);
-  assert.equal(calls[0].binary, '/usr/local/bin/botmux');
-  assert.deepEqual(calls[0].args.slice(0, 3), ['schedule', 'add', '1d']);
-  assert.ok(calls[0].args.includes('--topic'));
-  assert.ok(calls[0].args.includes('om_root123'));
-  assert.equal(calls[0].options.shell, undefined);
-  assert.equal(calls[1].args[0], 'schedule');
-  assert.equal(calls[1].args[2], 'task-abc');
+  assert.deepEqual(result, { triggerId: 'trigger-abc', sessionId: 'session-123' });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'http://127.0.0.1:7891/api/trigger');
+  assert.equal(calls[0].init.headers.cookie, 'botmux_dashboard_token=dashboard-token');
+  const request = JSON.parse(calls[0].init.body);
+  assert.deepEqual(request.target, {
+    kind: 'turn',
+    botId: 'cli_app123',
+    sessionId: 'session-123',
+  });
+  assert.equal(request.presentation.topicMessage, null);
+  assert.equal(request.options.asyncReturnSessionId, true);
+  assert.equal(request.options.turnIdempotencyKey, 'incident-action:card-123:continue');
+  assert.equal(request.envelope.payload.incident_id, 'INC-42;touch-pwned');
+  assert.equal(request.instruction.includes('INC-42;touch-pwned'), false);
+});
+
+test('continuation surfaces dashboard trigger failures', async () => {
+  await assert.rejects(() => enqueueContinuation({
+    actionName: ACTIONS.repair,
+    payload: fixturePayload(),
+    operatorId: 'ou_allowed123',
+    eventId: 'evt-1',
+  }, {
+    dashboardBase: 'http://127.0.0.1:7891',
+    dashboardToken: 'dashboard-token',
+    fetch: async () => new Response(JSON.stringify({ ok: false, error: 'session not found' }), {
+      status: 404,
+      headers: { 'content-type': 'application/json' },
+    }),
+  }), /trigger_failed:http_404:session not found/);
 });
 
 test('callback rejects an invalid bearer token', async t => {
@@ -193,7 +256,7 @@ test('callback requires a verified allowed operator', async t => {
 test('card selection is idempotent and only starts one continuation', async t => {
   let calls = 0;
   const { payload, url } = await withHandler(t, {
-    enqueue: async () => { calls++; return { taskId: 'task-1' }; },
+    enqueue: async () => { calls++; return { triggerId: 'trigger-1', sessionId: payload.sessionId }; },
   });
   const first = await post(url, callbackBody(ACTIONS.repair, payload));
   const second = await post(url, callbackBody(ACTIONS.continue, payload, { eventId: 'evt-2' }));

@@ -109,7 +109,11 @@ export function createIncidentActionHandler(options = {}) {
       let record;
       try {
         const result = await enqueue({ actionName, payload, operatorId, eventId: body.eventId });
-        record = await store.finish(payload.cardId, { status: 'completed', taskId: result.taskId });
+        record = await store.finish(payload.cardId, {
+          status: 'completed',
+          triggerId: result.triggerId,
+          sessionId: result.sessionId,
+        });
       } catch (error) {
         record = await store.finish(payload.cardId, { status: 'failed', errorCode: error.message });
       }

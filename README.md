@@ -2,7 +2,7 @@
 
 `@botmux-ai/plugin-incident-flow-actions` adds workflow actions to incident-result cards without changing Botmux core.
 
-It provides three incident-specific actions: `确认结论`, `授权修复`, and `继续排查`. The callback service verifies the Botmux gateway token, an HMAC-bound card payload, the original message binding, and the verified operator. The first valid choice locks the card and injects a structured continuation into the original Botmux session through a one-shot scheduled turn.
+It provides three incident-specific actions: `确认结论`, `授权修复`, and `继续排查`. The callback service verifies the Botmux gateway token, an HMAC-bound card payload, the original message binding, and the verified operator. The first valid choice locks the card and injects a structured continuation directly into the original Botmux session through the local Trigger API.
 
 ## Contract
 

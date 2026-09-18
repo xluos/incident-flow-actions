@@ -48,23 +48,57 @@ function parseSendOutput(stdout) {
   throw new Error('botmux send did not return a messageId');
 }
 
-export function buildSendMentionArgs(args) {
-  const explicit = values(args, '--mention')
+export function buildSendMentionArgs(args, additional = []) {
+  const explicit = [...additional, ...values(args, '--mention')
     .map(item => item.trim())
     .filter(Boolean)
-    .flatMap(item => ['--mention', item]);
+    .flatMap(item => ['--mention', item])];
   if (args.includes('--mention-back')) explicit.push('--mention-back');
   return explicit.length > 0 ? explicit : ['--no-mention'];
+}
+
+export function readOwnerIdentity(args) {
+  const ownerFile = value(args, '--owner-file');
+  if (!ownerFile) return null;
+  const parsed = JSON.parse(readFileSync(resolve(ownerFile), 'utf8'));
+  return parsed.repair_owner || parsed.ownership?.repair_owner || null;
+}
+
+export function applyOwnerIdentity(card, owner) {
+  if (!owner) return card;
+  const displayName = owner.mention_status === 'resolved'
+    ? owner.mention_display_name || owner.name
+    : owner.name || owner.mention_display_name;
+  if (!displayName) return card;
+  const replacement = owner.mention_status === 'resolved' && owner.mention_arg
+    ? `@${displayName}`
+    : `${displayName}（未通知：${owner.mention_status || 'unavailable'}）`;
+  const output = structuredClone(card);
+  const visit = node => {
+    if (!node || typeof node !== 'object') return;
+    if (node.tag === 'markdown' && typeof node.content === 'string') {
+      node.content = node.content.replaceAll('{{repair_owner}}', replacement);
+    }
+    if (Array.isArray(node)) node.forEach(visit);
+    else Object.values(node).forEach(visit);
+  };
+  visit(output);
+  return output;
+}
+
+export function buildOwnerMentionArgs(owner) {
+  if (owner?.mention_status !== 'resolved' || !owner.mention_arg) return [];
+  return ['--mention', owner.mention_arg];
 }
 
 async function sendIncidentCard(ctx) {
   const args = ctx.args;
   if (args.includes('--help') || args.includes('-h')) {
     return `用法:
-  botmux incident-flow-actions:send --incident-id <id> --card-file <card.json> [--mention <id:name>]... [--mention-back] [--allow-user <ou_...|on_...>]...
+  botmux incident-flow-actions:send --incident-id <id> --card-file <card.json> [--owner-file <owner-identity.json>] [--mention-back] [--allow-user <ou_...|on_...>]...
   botmux incident-flow-actions:send --incident-id <id> --summary <markdown> [--title <title>]
 
-默认仅当前会话 requester 可点击。--allow-user 可追加指定操作者；--mention 会透传给 botmux send，并可将卡片 Markdown 中的 @姓名渲染为真实提及。`;
+默认仅当前会话 requester 可点击。--owner-file 会把 {{repair_owner}} 替换为负责人真实 @；--allow-user 可追加指定操作者。`;
   }
   const incidentId = requireValue(args, '--incident-id');
   const sessionId = process.env.BOTMUX_SESSION_ID?.trim();
@@ -106,13 +140,14 @@ async function sendIncidentCard(ctx) {
     payload: encodedPayload,
     signature: signAction(actionName, encodedPayload, secret),
   });
-  const baseCard = readCard(args);
+  const owner = readOwnerIdentity(args);
+  const baseCard = applyOwnerIdentity(readCard(args), owner);
   const card = renderActionCard(baseCard, valueFor);
   const binary = process.env.BOTMUX_BIN || 'botmux';
   const sent = await execFile(binary, [
     'send', '--card-json', JSON.stringify(card),
     '--plugin-card-action', ctx.pluginId,
-    ...buildSendMentionArgs(args),
+    ...buildSendMentionArgs(args, buildOwnerMentionArgs(owner)),
   ], { env: process.env, cwd: process.cwd(), encoding: 'utf8', timeout: 30_000, maxBuffer: 2 * 1024 * 1024 });
   const receipt = parseSendOutput(sent.stdout);
   const pluginHome = dirname(ctx.api.config.path);
