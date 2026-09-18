@@ -1,10 +1,11 @@
-import { ACTION_META, ACTIONS } from './protocol.js';
+import { ACTION_PREFIX } from './protocol.js';
+import { DEFAULT_ACTIONS } from './config.js';
 
 export const ACTION_ELEMENT_ID = 'incident_flow_actions';
 export const STATUS_ELEMENT_ID = 'incident_flow_status';
 
-function callbackButton(actionName, valueFor, selectedAction) {
-  const meta = ACTION_META[actionName];
+function callbackButton(meta, valueFor, selectedAction) {
+  const actionName = ACTION_PREFIX + meta.id;
   const selected = selectedAction === actionName;
   const button = {
     tag: 'button',
@@ -13,35 +14,35 @@ function callbackButton(actionName, valueFor, selectedAction) {
     disabled: !!selectedAction,
   };
   if (!selectedAction) button.behaviors = [{ type: 'callback', value: valueFor(actionName) }];
-  if (actionName === ACTIONS.repair && !selectedAction) {
+  if (meta.confirmation && !selectedAction) {
     button.confirm = {
-      title: { tag: 'plain_text', content: '确认授权修复' },
-      text: { tag: 'plain_text', content: '确认后，故障机器人将进入修复流程并记录本次授权。' },
+      title: { tag: 'plain_text', content: meta.confirmation.title },
+      text: { tag: 'plain_text', content: meta.confirmation.text },
     };
   }
   return button;
 }
 
-function v2Actions(valueFor, selectedAction) {
+function v2Actions(valueFor, selectedAction, actions) {
   return {
     tag: 'column_set',
     element_id: ACTION_ELEMENT_ID,
     flex_mode: 'none',
     horizontal_spacing: 'small',
-    columns: Object.values(ACTIONS).map(actionName => ({
+    columns: actions.map(meta => ({
       tag: 'column',
       width: 'auto',
-      elements: [callbackButton(actionName, valueFor, selectedAction)],
+      elements: [callbackButton(meta, valueFor, selectedAction)],
     })),
   };
 }
 
-function legacyActions(valueFor, selectedAction) {
+function legacyActions(valueFor, selectedAction, actions) {
   return {
     tag: 'action',
     element_id: ACTION_ELEMENT_ID,
-    actions: Object.values(ACTIONS).map(actionName => {
-      const button = callbackButton(actionName, valueFor, selectedAction);
+    actions: actions.map(meta => {
+      const button = callbackButton(meta, valueFor, selectedAction);
       if (button.behaviors) {
         button.value = button.behaviors[0].value;
         delete button.behaviors;
@@ -51,10 +52,10 @@ function legacyActions(valueFor, selectedAction) {
   };
 }
 
-function statusElement(selectedAction, state) {
+function statusElement(selectedAction, state, actions) {
   if (!selectedAction) return null;
-  const label = ACTION_META[selectedAction]?.label ?? selectedAction;
-  const suffix = state === 'failed' ? '，但后续流程启动失败，请联系管理员处理' : '，后续流程已自动启动';
+  const label = actions.find(action => ACTION_PREFIX + action.id === selectedAction)?.label ?? selectedAction;
+  const suffix = state === 'failed' ? '，但后续流程启动失败，请联系管理员处理' : state === 'pending' ? '，正在提交后续任务' : '，后续任务已接收，将由对应机器人执行';
   return {
     tag: 'markdown',
     element_id: STATUS_ELEMENT_ID,
@@ -70,7 +71,7 @@ export function createSimpleResultCard({ title, summary }) {
   };
 }
 
-export function renderActionCard(baseCard, valueFor, selectedAction, state = 'completed') {
+export function renderActionCard(baseCard, valueFor, selectedAction, state = 'completed', actions = DEFAULT_ACTIONS) {
   const card = structuredClone(baseCard);
   const isV2 = card.schema === '2.0' || card.body?.elements;
   const elements = isV2
@@ -83,9 +84,9 @@ export function renderActionCard(baseCard, valueFor, selectedAction, state = 'co
   // elements in plugin callback responses because they have no allowlisted
   // action payload.
   if (!selectedAction) {
-    retained.push(isV2 ? v2Actions(valueFor, selectedAction) : legacyActions(valueFor, selectedAction));
+    retained.push(isV2 ? v2Actions(valueFor, selectedAction, actions) : legacyActions(valueFor, selectedAction, actions));
   }
-  const status = statusElement(selectedAction, state);
+  const status = statusElement(selectedAction, state, actions);
   if (status) retained.push(status);
   if (isV2) card.body.elements = retained;
   else card.elements = retained;

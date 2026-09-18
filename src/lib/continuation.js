@@ -1,70 +1,108 @@
-import { execFile as execFileCallback } from 'node:child_process';
-import { promisify } from 'node:util';
-import { ACTION_META } from './protocol.js';
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { ACTION_PREFIX } from './protocol.js';
+import { DEFAULT_ACTIONS, normalizeActions } from './config.js';
 
-const execFile = promisify(execFileCallback);
-
-export function continuationPrompt({ actionName, payload, operatorId, eventId }) {
-  const action = ACTION_META[actionName]?.key;
-  const instruction = action === 'confirm'
-    ? '用户已确认故障结论。记录确认，完成必要收尾，并结束本次故障处理。'
-    : action === 'repair'
-      ? '用户已明确授权修复。记录授权，按故障修复流程继续；仍需遵守现有发布、Review 和验证门禁。'
-      : '用户要求继续排查。保持故障未关闭，基于现有证据继续诊断并汇报新的结论。';
-  return [
-    '<incident_flow_action schema_version="1">',
-    `  <incident_id>${payload.incidentId}</incident_id>`,
-    `  <action>${action}</action>`,
-    `  <verified_operator_open_id>${operatorId}</verified_operator_open_id>`,
-    `  <event_id>${eventId}</event_id>`,
-    '</incident_flow_action>',
-    instruction,
-  ].join('\n');
+function selectedAction(actionName, configured) {
+  const action = configured ?? DEFAULT_ACTIONS.find(item => ACTION_PREFIX + item.id === actionName);
+  if (!action || ACTION_PREFIX + action.id !== actionName) throw new Error('unknown_action');
+  return normalizeActions([action])[0];
 }
 
-function parseTaskId(stdout) {
-  const match = String(stdout).match(/\[([^\]\s]+)\]/);
-  if (!match) throw new Error('schedule_task_id_missing');
-  return match[1];
+export function continuationInstruction(actionName, action) {
+  return selectedAction(actionName, action).instruction;
 }
 
-async function defaultRun(binary, args, options) {
-  return execFile(binary, args, { ...options, encoding: 'utf8', timeout: 20_000, maxBuffer: 1024 * 1024 });
+async function resolveTarget(action, payload, dashboard, fetchImpl) {
+  if (!action.target) return { kind: 'turn', botId: payload.larkAppId, sessionId: payload.sessionId };
+  const response = await fetchImpl(`${dashboard.base}/api/sessions`, {
+    headers: { cookie: `botmux_dashboard_token=${dashboard.token}` },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) throw new Error('target_sessions_unavailable');
+  const body = await response.json();
+  const sessions = Array.isArray(body) ? body : body.sessions;
+  if (!Array.isArray(sessions)) throw new Error('target_sessions_invalid');
+  const candidates = sessions.filter(session => session.larkAppId === action.target.botId
+    && session.chatId === payload.chatId
+    && session.scope === payload.sessionScope
+    && (payload.sessionScope !== 'thread' || session.rootMessageId === payload.rootMessageId)
+    && (!action.target.sessionId || session.sessionId === action.target.sessionId));
+  if (candidates.length !== 1) throw new Error('target_session_missing_or_ambiguous');
+  return { kind: 'turn', botId: action.target.botId, sessionId: candidates[0].sessionId };
+}
+
+function readTrimmed(path) {
+  return readFileSync(path, 'utf8').trim();
+}
+
+function dashboardAccess(deps) {
+  if (deps.dashboardBase && deps.dashboardToken) {
+    return { base: deps.dashboardBase, token: deps.dashboardToken };
+  }
+  const configDir = deps.configDir ?? join(homedir(), '.botmux');
+  const port = readTrimmed(join(configDir, '.dashboard-port'));
+  const token = readTrimmed(join(configDir, '.dashboard-token'));
+  if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
+    throw new Error('dashboard_port_invalid');
+  }
+  if (!token) throw new Error('dashboard_token_missing');
+  return { base: `http://127.0.0.1:${port}`, token };
 }
 
 export async function enqueueContinuation(input, deps = {}) {
-  const run = deps.run ?? defaultRun;
-  const binary = deps.binary ?? process.env.BOTMUX_BIN ?? 'botmux';
+  const fetchImpl = deps.fetch ?? fetch;
   const { payload } = input;
-  const prompt = continuationPrompt(input);
-  const env = {
-    ...process.env,
-    BOTMUX_SESSION_ID: payload.sessionId,
-    BOTMUX_CHAT_ID: payload.chatId,
-    BOTMUX_LARK_APP_ID: payload.larkAppId,
-    BOTMUX_SESSION_SCOPE: payload.sessionScope,
-    BOTMUX_OWNER_OPEN_ID: input.operatorId,
-    ...(payload.rootMessageId ? { BOTMUX_ROOT_MESSAGE_ID: payload.rootMessageId } : {}),
-    ...(payload.dataDir ? { SESSION_DATA_DIR: payload.dataDir } : {}),
+  const definition = selectedAction(input.actionName, input.action);
+  const action = definition.id;
+  const dashboard = dashboardAccess(deps);
+  const target = await resolveTarget(definition, payload, dashboard, fetchImpl);
+  const request = {
+    source: {
+      type: 'ui',
+      connectorId: 'incident-flow-actions',
+      requestId: `incident-action:${input.eventId}`,
+      receivedAt: new Date().toISOString(),
+    },
+    target,
+    envelope: {
+      format: 'incident_flow_action.v1',
+      sourceName: 'Incident Flow Actions',
+      trusted: false,
+      payload: {
+        incident_id: payload.incidentId,
+        source_bot_id: payload.larkAppId,
+        source_session_id: payload.sessionId,
+        source_chat_id: payload.chatId,
+        action_label: definition.label,
+        action,
+        verified_operator_open_id: input.operatorId,
+        event_id: input.eventId,
+      },
+    },
+    instruction: continuationInstruction(input.actionName, definition),
+    presentation: { topicMessage: null },
+    options: {
+      asyncReturnSessionId: true,
+      turnIdempotencyKey: `incident-action:${payload.cardId}:${action}`,
+    },
   };
-  const args = [
-    'schedule', 'add', '1d', prompt,
-    '--name', `incident-action:${payload.cardId}`,
-    '--chat-id', payload.chatId,
-    '--lark-app-id', payload.larkAppId,
-    '--workdir', payload.workingDir,
-    '--silent',
-  ];
-  if (payload.sessionScope === 'thread') {
-    args.push('--topic', '--root-msg-id', payload.rootMessageId);
-  } else {
-    args.push('--top-level');
-  }
-  const created = await run(binary, args, { env, cwd: payload.workingDir });
-  const taskId = parseTaskId(created.stdout);
-  await run(binary, ['schedule', 'run', taskId, '--lark-app-id', payload.larkAppId], {
-    env,
-    cwd: payload.workingDir,
+  const response = await fetchImpl(`${dashboard.base}/api/trigger`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      cookie: `botmux_dashboard_token=${dashboard.token}`,
+    },
+    body: JSON.stringify(request),
+    signal: AbortSignal.timeout(20_000),
   });
-  return { taskId };
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || body?.ok !== true) {
+    throw new Error(`trigger_failed:http_${response.status}:${body?.error ?? body?.errorCode ?? 'unknown'}`);
+  }
+  return {
+    triggerId: body.triggerId ?? null,
+    sessionId: body.target?.sessionId ?? body.async?.sessionId ?? target.sessionId,
+  };
 }

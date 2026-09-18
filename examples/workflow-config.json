@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "defaultProfile": null,
+  "profiles": {
+    "incident": {
+      "actions": [
+        { "id": "confirm", "label": "确认结论", "style": "default", "instruction": "用户已确认当前结论。记录确认并完成收尾，汇报后续负责人。" },
+        { "id": "repair", "label": "授权修复", "style": "primary", "confirmation": { "title": "确认授权修复", "text": "将按当前上下文执行修复，并反馈结果。" }, "instruction": "用户已授权修复。按当前任务上下文推进，开发完成和部署成功时立即通知用户，并说明下一阶段负责人。" },
+        { "id": "continue", "label": "继续排查", "style": "default", "instruction": "继续只读排查，汇报新增证据以及仍待确认的信息。" }
+      ]
+    },
+    "quality": {
+      "actions": [
+        { "id": "review", "label": "检查变更", "style": "primary", "instruction": "Review 当前任务的变更，报告问题及证据。" },
+        { "id": "fix", "label": "直接修复", "style": "default", "confirmation": { "title": "授权修复发现的问题", "text": "允许当前机器人修改并验证当前问题。" }, "instruction": "用户授权修复当前 Review 发现的问题。修改、验证并反馈结果。" }
+      ]
+    }
+  },
+  "bots": {
+    "cli_YOUR_INCIDENT_APP": { "enabled": true, "profile": "incident" },
+    "cli_YOUR_QUALITY_APP": { "enabled": true, "profile": "quality" }
+  }
+}

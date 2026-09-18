@@ -5,12 +5,13 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderActionCard } from '../lib/card.js';
 import {
-  ACTION_META,
+  ACTION_PREFIX,
   decodePayload,
   operatorIsAllowed,
   validatePayload,
   verifyActionSignature,
 } from '../lib/protocol.js';
+import { bindingActions } from '../lib/config.js';
 import { enqueueContinuation } from '../lib/continuation.js';
 import { ActionStore, readCardBinding } from '../lib/storage.js';
 
@@ -78,7 +79,7 @@ export function createIncidentActionHandler(options = {}) {
     try {
       if (body?.schemaVersion !== 1 || typeof body.eventId !== 'string') throw new Error('invalid_request');
       const actionName = body.actionName;
-      if (!ACTION_META[actionName]) throw new Error('unknown_action');
+      if (typeof actionName !== 'string' || !/^incident\.flow\.[a-z][a-z0-9_-]{0,47}$/.test(actionName)) throw new Error('unknown_action');
       const encodedPayload = body.action?.value?.payload;
       const signature = body.action?.value?.signature;
       const secret = options.signingSecret ?? loadSigningSecret(pluginHome);
@@ -90,6 +91,9 @@ export function createIncidentActionHandler(options = {}) {
       }
       const binding = readCardBinding(pluginHome, payload.cardId);
       if (!binding || binding.encodedPayload !== encodedPayload) throw new Error('card_binding_missing');
+      const actions = bindingActions(binding, payload);
+      const action = actions.find(item => ACTION_PREFIX + item.id === actionName);
+      if (!action) throw new Error('unknown_action');
       if (binding.messageId !== body.context?.open_message_id) throw new Error('message_binding_mismatch');
       const operatorId = body.operator.open_id ?? body.operator.union_id;
       if (typeof operatorId !== 'string') throw new Error('operator_required');
@@ -102,21 +106,25 @@ export function createIncidentActionHandler(options = {}) {
       });
       if (claim.kind !== 'claimed') {
         const selectedAction = claim.record.actionName;
-        const card = renderActionCard(binding.baseCard, () => ({}), selectedAction, claim.record.status);
-        return json(res, 200, ack({ toast: `已选择“${ACTION_META[selectedAction].label}”，无需重复操作`, card }));
+        const card = renderActionCard(binding.baseCard, () => ({}), selectedAction, claim.record.status, actions);
+        return json(res, 200, ack({ toast: `已选择“${actions.find(item => ACTION_PREFIX + item.id === selectedAction)?.label ?? selectedAction}”，无需重复操作`, card }));
       }
 
       let record;
       try {
-        const result = await enqueue({ actionName, payload, operatorId, eventId: body.eventId });
-        record = await store.finish(payload.cardId, { status: 'completed', taskId: result.taskId });
+        const result = await enqueue({ actionName, action, payload, operatorId, eventId: body.eventId });
+        record = await store.finish(payload.cardId, {
+          status: 'completed',
+          triggerId: result.triggerId,
+          sessionId: result.sessionId,
+        });
       } catch (error) {
         record = await store.finish(payload.cardId, { status: 'failed', errorCode: error.message });
       }
-      const card = renderActionCard(binding.baseCard, () => ({}), actionName, record.status);
+      const card = renderActionCard(binding.baseCard, () => ({}), actionName, record.status, actions);
       return json(res, 200, ack({
         toastType: record.status === 'completed' ? 'success' : 'error',
-        toast: record.status === 'completed' ? '选择已接收，后续流程已启动' : '选择已记录，但后续流程启动失败',
+        toast: record.status === 'completed' ? '选择已接收，后续任务已提交' : '选择已记录，但后续流程启动失败',
         card,
       }));
     } catch (error) {
