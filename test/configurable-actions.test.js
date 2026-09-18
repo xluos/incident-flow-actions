@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
@@ -119,4 +120,27 @@ test('send dry-run resolves bot profile without sending or persisting secrets', 
   const result = JSON.parse(await handlers['incident-flow-actions:send'].run({ args: ['--incident-id', 'test', '--summary', 'Preview', '--dry-run'], pluginId: 'incident-flow-actions', api: { config: { get: key => key === 'workflowConfig' ? config : undefined, set: () => assert.fail('dry-run must not write') } } }));
   assert.equal(result.dryRun, true);
   assert.deepEqual(result.actions.map(action => action.id), ['inspect', 'review']);
+});
+
+
+test('host configuration entry validates without exposing or replacing the signing key', t => {
+  const home = mkdtempSync(join(tmpdir(), 'host-actions-config-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ signingSecret: 'keep-private-secret', unrelated: true }));
+  const file = join(home, 'workflow.json');
+  writeFileSync(file, JSON.stringify(config));
+  const run = extra => spawnSync(process.execPath, ['src/cli/configure.js', '--plugin-home', home, '--file', file, ...extra], { encoding: 'utf8' });
+  const check = run([]);
+  assert.equal(check.status, 0, check.stderr);
+  assert.equal(JSON.parse(readFileSync(join(home, 'config.json'))).workflowConfig, undefined);
+  const applied = run(['--apply']);
+  assert.equal(applied.status, 0, applied.stderr);
+  assert.ok(!applied.stdout.includes('keep-private-secret'));
+  const saved = JSON.parse(readFileSync(join(home, 'config.json')));
+  assert.equal(saved.signingSecret, 'keep-private-secret');
+  assert.equal(saved.unrelated, true);
+  assert.equal(saved.workflowConfig.bots.cli_source.profile, 'custom');
+  writeFileSync(file, JSON.stringify({ ...config, defaultProfile: 'unknown' }));
+  assert.equal(run(['--apply']).status, 1);
+  assert.deepEqual(JSON.parse(readFileSync(join(home, 'config.json'))), saved);
 });

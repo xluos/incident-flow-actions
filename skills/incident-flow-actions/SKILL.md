@@ -33,3 +33,5 @@ botmux incident-flow-actions:send \
 - `bots.<AppID>: { enabled, profile }` 按机器人选择方案。`defaultProfile: null` 只允许显式列出的机器人；字符串则为未单独配置的机器人提供默认方案。
 
 插件可见范围另外由 `botmux plugin enable incident-flow-actions --bot <机器人名或索引>` 控制。插件全局启用时不能靠 bot 局部禁用覆盖全局范围，需要使用上面的配置限制或调整全局启用范围。
+
+按机器人启用时，宿主 Shell 的 Botmux CLI 不会暴露插件命令。在宿主维护配置请使用 `node ~/.botmux/plugins/incident-flow-actions/dist/cli/configure.js --file <配置JSON> --apply`，会话内继续使用上述 `botmux incident-flow-actions:config`。此入口只更新 workflowConfig，保留签名密钥。

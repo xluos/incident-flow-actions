@@ -139,6 +139,7 @@ writeFileSync(join(outputRoot, 'package.json'), JSON.stringify({ private: true, 
 
 await Promise.all([
   bundleNode(join(sourceRoot, 'cli', 'index.js'), join(outputRoot, 'cli', 'index.js')),
+  bundleNode(join(sourceRoot, 'cli', 'configure.js'), join(outputRoot, 'cli', 'configure.js')),
   bundleNode(join(sourceRoot, 'mcp', 'server.js'), join(outputRoot, 'mcp', 'server.js')),
   bundleNode(join(sourceRoot, 'service', 'index.js'), join(outputRoot, 'service', 'index.js')),
   bundleNode(join(sourceRoot, 'service', 'server.js'), join(outputRoot, 'service', 'server.js')),

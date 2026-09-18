@@ -76,7 +76,15 @@ an inherited profile for bots without an override. Each bot has `enabled` and an
 optional `profile`. Plugin enablement in Botmux is a separate gate; global
 plugin enablement is additive, so prefer bot-scoped enablement for selected bots.
 The configuration command does not expose or overwrite the signing secret.
-Changes take effect for newly sent cards without restarting the plugin service.
+For a bot-scoped install, Botmux exposes plugin commands only inside that bot's
+managed sessions. From the host shell use the standalone configuration entry:
+
+```bash
+node ~/.botmux/plugins/incident-flow-actions/dist/cli/configure.js --file /absolute/path/workflow-config.json --apply
+```
+
+It uses the same validation and preserves unrelated config including the signing
+key. Changes take effect for newly sent cards without restarting the plugin service.
 
 Each profile has 1–5 ordered actions with `id`, `label`, `style` (`default`,
 `primary`, `danger`), and `instruction`. Optional `confirmation: {title, text}`
