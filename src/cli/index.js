@@ -180,6 +180,8 @@ async function sendIncidentCard(ctx) {
   });
   return JSON.stringify({
     success: true,
+    deliveryComplete: true,
+    nextStep: '结果卡已发送。仅回读核验并保存 messageId；不要再次调用 botmux send 发送摘要或已发送通知。核验成功后最终回复 BOTMUX_NOTHING_TO_SEND。',
     incidentId,
     cardId: payload.cardId,
     messageId: receipt.messageId,
