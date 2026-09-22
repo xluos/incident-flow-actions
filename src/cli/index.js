@@ -100,7 +100,7 @@ async function sendIncidentCard(ctx) {
   const args = ctx.args;
   if (args.includes('--help') || args.includes('-h')) {
     return `用法:
-  botmux incident-flow-actions:send --incident-id <id> --summary-file <reply.txt> [--owner-file <owner-identity.json>] [--mention-back] [--allow-user <ou_...|on_...>]...
+  botmux incident-flow-actions:send --incident-id <id> --card-file <card.json> [--owner-file <owner-identity.json>] [--mention-back] [--allow-user <ou_...|on_...>]...
   botmux incident-flow-actions:send --incident-id <id> --summary <markdown> [--title <title>]
 
 可选 --profile <方案名>、重复 --action <动作ID> 选择本次按钮，和 --dry-run；按钮及指令由 incident-flow-actions:config 配置。默认仅当前会话 requester 可点击。--owner-file 会把 {{repair_owner}} 替换为负责人真实 @；--allow-user 可追加指定操作者。`;
