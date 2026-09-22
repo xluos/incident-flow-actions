@@ -152,7 +152,8 @@ test('incident card renders unresolved owner without inventing a mention', () =>
   };
   const card = createSimpleResultCard({ title: '结论', summary: '**修复负责人：** {{repair_owner}}' });
 
-  assert.match(applyOwnerIdentity(card, owner).body.elements[0].content, /未通知：ambiguous/);
+  assert.equal(applyOwnerIdentity(card, owner).body.elements[0].content, '**修复负责人：** 张三');
+  assert.equal(owner.mention_status, 'ambiguous');
   assert.deepEqual(buildOwnerMentionArgs(owner), []);
 });
 
@@ -279,4 +280,12 @@ test('simple card supports the Botmux mention footer without splitting delivery'
 test('explicit no-mention suppresses owner notifications and rejects conflicts', () => {
   assert.deepEqual(buildSendMentionArgs(['--no-mention'], ['--mention', 'owner@example.com']), ['--no-mention']);
   assert.throws(() => buildSendMentionArgs(['--no-mention', '--mention-back']), /cannot be combined/);
+});
+
+ test('not-in-chat owner remains readable without a fake notification or status code', () => {
+  const owner = { name: '测试负责人', mention_status: 'not_in_chat', selection_source: 'domain_fallback' };
+  const card = createSimpleResultCard({ summary: '暂请 {{repair_owner}} 先承接，具体归属还需确认。' });
+  assert.equal(applyOwnerIdentity(card, owner).body.elements[0].content, '暂请 测试负责人 先承接，具体归属还需确认。');
+  assert.deepEqual(buildOwnerMentionArgs(owner), []);
+  assert.equal(owner.selection_source, 'domain_fallback');
 });

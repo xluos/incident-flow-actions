@@ -77,7 +77,7 @@ export function applyOwnerIdentity(card, owner) {
   if (!displayName) return card;
   const replacement = owner.mention_status === 'resolved' && owner.mention_arg
     ? `@${displayName}`
-    : `${displayName}（未通知：${owner.mention_status || 'unavailable'}）`;
+    : displayName;
   const output = structuredClone(card);
   const visit = node => {
     if (!node || typeof node !== 'object') return;
