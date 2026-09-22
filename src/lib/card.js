@@ -67,7 +67,7 @@ export function createSimpleResultCard({ title, summary }) {
   return {
     schema: '2.0',
     config: { wide_screen_mode: true },
-    header: { template: 'blue', title: { tag: 'plain_text', content: title } },
+    ...(title?.trim() ? { header: { template: 'blue', title: { tag: 'plain_text', content: title.trim() } } } : {}),
     body: { elements: [{ tag: 'markdown', content: summary }] },
   };
 }

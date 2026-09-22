@@ -29,7 +29,7 @@ function requireValue(args, name) {
 function readCard(args) {
   const cardFile = value(args, '--card-file');
   if (cardFile) return JSON.parse(readFileSync(resolve(cardFile), 'utf8'));
-  const title = value(args, '--title')?.trim() || '故障排查结论';
+  const title = value(args, '--title')?.trim();
   const summaryFile = value(args, '--summary-file');
   const summary = summaryFile
     ? readFileSync(resolve(summaryFile), 'utf8').trim()

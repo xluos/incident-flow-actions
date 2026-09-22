@@ -118,6 +118,7 @@ test('send dry-run resolves bot profile without sending or persisting secrets', 
   t.after(() => keys.forEach(key => old[key] === undefined ? delete process.env[key] : process.env[key] = old[key]));
   Object.assign(process.env, { BOTMUX_SESSION_ID: 'session', BOTMUX_CHAT_ID: 'oc_chat', BOTMUX_LARK_APP_ID: 'cli_source', BOTMUX_OWNER_OPEN_ID: 'ou_person123', BOTMUX_SESSION_SCOPE: 'chat' });
   const result = JSON.parse(await handlers['incident-flow-actions:send'].run({ args: ['--incident-id', 'test', '--summary', 'Preview', '--dry-run'], pluginId: 'incident-flow-actions', api: { config: { get: key => key === 'workflowConfig' ? config : undefined, set: () => assert.fail('dry-run must not write') } } }));
+  assert.equal(Object.hasOwn(result.card, 'header'), false);
   assert.equal(result.dryRun, true);
   assert.deepEqual(result.actions.map(action => action.id), ['inspect', 'review']);
   const ctx = { args: ['--incident-id', 'test', '--summary', 'Preview', '--action', 'review', '--dry-run'], pluginId: 'incident-flow-actions', api: { config: { get: key => key === 'workflowConfig' ? config : undefined, set: () => assert.fail('dry-run must not write') } } };
