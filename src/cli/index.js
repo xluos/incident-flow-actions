@@ -96,6 +96,36 @@ export function buildOwnerMentionArgs(owner) {
   return ['--mention', owner.mention_arg];
 }
 
+function ownerRejectedBeforeSend(error, owner, args) {
+  if (error?.code !== 2 || error.killed || error.signal || args.includes('--mention')) return false;
+  if (owner?.mention_status !== 'resolved' || !owner.mention_arg) return false;
+  const identifier = owner.mention_arg.split(':')[0];
+  const outsiderPrefix = `--mention 拒绝：以下用户不在目标群里，不能 @：${identifier}→`;
+  // These two CLI errors occur before any message is sent. Unknown failures
+  // (including timeouts and member-list permission errors) must reach the caller.
+  const lines = String(error.stderr || '').trim().split(/\r?\n/);
+  return lines.some(line =>
+    line === `--mention 无法解析这些标识为当前群唯一成员：${identifier}（不在群、重名或本 bot 不可见）`
+    || (line.startsWith(outsiderPrefix)
+      && /^ou_[A-Za-z0-9]+$/.test(line.slice(outsiderPrefix.length))),
+  );
+}
+
+export async function sendWithOwnerIdentity({ baseCard, owner, args, render, send }) {
+  const attempt = async identity => {
+    const resolvedCard = applyOwnerIdentity(baseCard, identity);
+    const sent = await send(render(resolvedCard), buildSendMentionArgs(args, buildOwnerMentionArgs(identity)));
+    return { sent, baseCard: resolvedCard };
+  };
+  try {
+    return await attempt(owner);
+  } catch (error) {
+    if (!ownerRejectedBeforeSend(error, owner, args)) throw error;
+    const result = await attempt({ ...owner, mention_status: 'unavailable_in_chat' });
+    return { ...result, ownerNotification: { status: 'name_only', reason: 'owner_mention_rejected', identity: owner } };
+  }
+}
+
 async function sendIncidentCard(ctx) {
   const args = ctx.args;
   if (args.includes('--help') || args.includes('-h')) {
@@ -103,7 +133,7 @@ async function sendIncidentCard(ctx) {
   botmux incident-flow-actions:send --incident-id <id> --card-file <card.json> [--owner-file <owner-identity.json>] [--mention-back] [--allow-user <ou_...|on_...>]...
   botmux incident-flow-actions:send --incident-id <id> --summary <markdown> [--title <title>]
 
-可选 --profile <方案名>、重复 --action <动作ID> 选择本次按钮，和 --dry-run；按钮及指令由 incident-flow-actions:config 配置。默认仅当前会话 requester 可点击。--owner-file 会把 {{repair_owner}} 替换为负责人真实 @；--allow-user 可追加指定操作者。`;
+可选 --profile <方案名>、重复 --action <动作ID> 选择本次按钮，和 --dry-run；按钮及指令由 incident-flow-actions:config 配置。默认仅当前会话 requester 可点击。--owner-file 会把 {{repair_owner}} 替换为负责人真实 @；发送前确认无法在当前群 @ 时使用核实姓名。--allow-user 可追加指定操作者。`;
   }
   const incidentId = requireValue(args, '--incident-id');
   const sessionId = process.env.BOTMUX_SESSION_ID?.trim();
@@ -156,16 +186,20 @@ async function sendIncidentCard(ctx) {
   const owner = rawOwner && args.includes('--no-mention')
     ? { ...rawOwner, mention_status: 'suppressed' }
     : rawOwner;
-  const baseCard = applyOwnerIdentity(readCard(args), owner);
-  const card = renderActionCard(baseCard, valueFor, undefined, 'completed', actions);
+  const inputCard = readCard(args);
+  const render = baseCard => renderActionCard(baseCard, valueFor, undefined, 'completed', actions);
+  const card = render(applyOwnerIdentity(inputCard, owner));
   if (args.includes('--dry-run')) return JSON.stringify({ success: true, dryRun: true, profileId, botId: larkAppId, actions, card });
   const binary = process.env.BOTMUX_BIN || 'botmux';
-  const sent = await execFile(binary, [
-    'send', '--card-json', JSON.stringify(card),
-    '--plugin-card-action', ctx.pluginId,
-    '--response-kind', 'final',
-    ...buildSendMentionArgs(args, buildOwnerMentionArgs(owner)),
-  ], { env: process.env, cwd: process.cwd(), encoding: 'utf8', timeout: 30_000, maxBuffer: 2 * 1024 * 1024 });
+  const { sent, baseCard, ownerNotification } = await sendWithOwnerIdentity({
+    baseCard: inputCard, owner, args, render,
+    send: (card, mentionArgs) => execFile(binary, [
+      'send', '--card-json', JSON.stringify(card),
+      '--plugin-card-action', ctx.pluginId,
+      '--response-kind', 'final',
+      ...mentionArgs,
+    ], { env: process.env, cwd: process.cwd(), encoding: 'utf8', timeout: 30_000, maxBuffer: 2 * 1024 * 1024 }),
+  });
   const receipt = parseSendOutput(sent.stdout);
   const pluginHome = dirname(ctx.api.config.path);
   writeCardBinding(pluginHome, {
@@ -176,6 +210,7 @@ async function sendIncidentCard(ctx) {
     baseCard,
     actions,
     profileId,
+    ...(ownerNotification ? { ownerNotification } : {}),
     createdAt: new Date().toISOString(),
   });
   return JSON.stringify({
@@ -186,6 +221,7 @@ async function sendIncidentCard(ctx) {
     cardId: payload.cardId,
     messageId: receipt.messageId,
     profileId,
+    ...(ownerNotification ? { ownerNotification } : {}),
     actions: actions.map(action => ACTION_PREFIX + action.id),
   });
 }

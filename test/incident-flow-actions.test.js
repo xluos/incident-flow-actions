@@ -19,10 +19,76 @@ import {
   applyOwnerIdentity,
   buildOwnerMentionArgs,
   buildSendMentionArgs,
+  sendWithOwnerIdentity,
 } from '../src/cli/index.js';
 
 const SECRET = 'test-signing-secret-that-is-long-enough';
 const TOKEN = 'private-gateway-token';
+
+test('owner membership rejection sends a name-only card and preserves requester notification', async () => {
+  for (const stderr of [
+    '--mention 无法解析这些标识为当前群唯一成员：owner@example.com（不在群、重名或本 bot 不可见）',
+    '--mention 拒绝：以下用户不在目标群里，不能 @：owner@example.com→ou_owner',
+  ]) {
+    const owner = { name: '负责人', mention_status: 'resolved', mention_arg: 'owner@example.com:负责人' };
+    const calls = [];
+    const result = await sendWithOwnerIdentity({
+      baseCard: createSimpleResultCard({ title: '结果', summary: '建议由 {{repair_owner}} 跟进。' }),
+      owner, args: ['--mention-back'], render: card => card,
+      send: async (card, mentions) => {
+        calls.push({ card, mentions });
+        if (calls.length === 1) throw Object.assign(new Error('rejected'), { code: 2, stderr });
+        return { stdout: '{"success":true,"messageId":"om_result"}' };
+      },
+    });
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[0].mentions, ['--mention', 'owner@example.com:负责人', '--mention-back']);
+    assert.deepEqual(calls[1].mentions, ['--mention-back']);
+    assert.equal(calls[1].card.body.elements[0].content, '建议由 负责人 跟进。');
+    assert.deepEqual(result.baseCard, calls[1].card);
+    assert.equal(result.ownerNotification.status, 'name_only');
+    assert.equal(owner.mention_status, 'resolved');
+  }
+});
+
+test('owner notification success sends once and retains the real mention', async () => {
+  let count = 0;
+  const result = await sendWithOwnerIdentity({
+    baseCard: createSimpleResultCard({ title: '结果', summary: '{{repair_owner}}' }),
+    owner: { name: '负责人', mention_status: 'resolved', mention_arg: 'owner@example.com:负责人' },
+    args: [], render: card => card,
+    send: async () => { count++; return { stdout: 'sent' }; },
+  });
+  assert.equal(count, 1);
+  assert.equal(result.baseCard.body.elements[0].content, '@负责人');
+  assert.equal(result.ownerNotification, undefined);
+});
+
+test('owner notification fallback never retries uncertain sends or explicit recipients', async () => {
+  const rejection = '--mention 无法解析这些标识为当前群唯一成员：owner@example.com（不在群、重名或本 bot 不可见）';
+  const cases = [
+    { code: 'ETIMEDOUT', stderr: rejection },
+    { code: 2, killed: true, stderr: rejection },
+    { code: 2, signal: 'SIGTERM', stderr: rejection },
+    { code: 2, stderr: 'network failure' },
+    { code: 2, stderr: '--mention 群成员校验失败（无法读取群 oc_test 成员）' },
+    { code: 2, stderr: rejection.replace('owner@example.com', 'other@example.com') },
+    { code: 2, stderr: rejection.replace('不在群、重名或本 bot 不可见', '部分通讯录查询临时失败') },
+    { code: 2, stderr: '--mention 拒绝：以下用户不在目标群里，不能 @：owner@example.com→ou_owner, other@example.com→ou_other' },
+    { code: 2, stderr: rejection, args: ['--mention', 'ou_explicit:显式用户'] },
+  ];
+  for (const failure of cases) {
+    let count = 0;
+    const error = Object.assign(new Error('failed'), failure);
+    await assert.rejects(sendWithOwnerIdentity({
+      baseCard: createSimpleResultCard({ title: '结果', summary: '{{repair_owner}}' }),
+      owner: { name: '负责人', mention_status: 'resolved', mention_arg: 'owner@example.com:负责人' },
+      args: failure.args || [], render: card => card,
+      send: async () => { count++; throw error; },
+    }), e => e === error);
+    assert.equal(count, 1);
+  }
+});
 
 function fixturePayload(overrides = {}) {
   const now = Date.now();
