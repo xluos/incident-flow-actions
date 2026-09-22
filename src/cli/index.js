@@ -50,6 +50,10 @@ function parseSendOutput(stdout) {
 }
 
 export function buildSendMentionArgs(args, additional = []) {
+  if (args.includes('--no-mention')) {
+    if (args.includes('--mention') || args.includes('--mention-back')) throw new Error('--no-mention cannot be combined with --mention or --mention-back');
+    return ['--no-mention'];
+  }
   const explicit = [...additional, ...values(args, '--mention')
     .map(item => item.trim())
     .filter(Boolean)
@@ -99,7 +103,7 @@ async function sendIncidentCard(ctx) {
   botmux incident-flow-actions:send --incident-id <id> --card-file <card.json> [--owner-file <owner-identity.json>] [--mention-back] [--allow-user <ou_...|on_...>]...
   botmux incident-flow-actions:send --incident-id <id> --summary <markdown> [--title <title>]
 
-可选 --profile <方案名> 和 --dry-run；按钮及指令由 incident-flow-actions:config 配置。默认仅当前会话 requester 可点击。--owner-file 会把 {{repair_owner}} 替换为负责人真实 @；--allow-user 可追加指定操作者。`;
+可选 --profile <方案名>、重复 --action <动作ID> 选择本次按钮，和 --dry-run；按钮及指令由 incident-flow-actions:config 配置。默认仅当前会话 requester 可点击。--owner-file 会把 {{repair_owner}} 替换为负责人真实 @；--allow-user 可追加指定操作者。`;
   }
   const incidentId = requireValue(args, '--incident-id');
   const sessionId = process.env.BOTMUX_SESSION_ID?.trim();
@@ -119,7 +123,11 @@ async function sendIncidentCard(ctx) {
     if (!args.includes('--dry-run')) ctx.api.config.set('signingSecret', secret);
   }
   const allowedOperatorIds = [...new Set([requester, ...values(args, '--allow-user').map(id => id.trim())])];
-  const { profileId, actions } = resolveActions(ctx.api.config.get('workflowConfig'), larkAppId, value(args, '--profile'));
+  const { profileId, actions: configuredActions } = resolveActions(ctx.api.config.get('workflowConfig'), larkAppId, value(args, '--profile'));
+  const requestedActions = values(args, '--action');
+  if (args.includes('--action') && requestedActions.length === 0) throw new Error('--action requires an action ID');
+  if (requestedActions.some(id => !configuredActions.some(action => action.id === id))) throw new Error('unknown_action');
+  const actions = requestedActions.length ? configuredActions.filter(action => requestedActions.includes(action.id)) : configuredActions;
   const issuedAt = Date.now();
   const payload = {
     schemaVersion: 1,
@@ -144,7 +152,10 @@ async function sendIncidentCard(ctx) {
     payload: encodedPayload,
     signature: signAction(actionName, encodedPayload, secret),
   });
-  const owner = readOwnerIdentity(args);
+  const rawOwner = readOwnerIdentity(args);
+  const owner = rawOwner && args.includes('--no-mention')
+    ? { ...rawOwner, mention_status: 'suppressed' }
+    : rawOwner;
   const baseCard = applyOwnerIdentity(readCard(args), owner);
   const card = renderActionCard(baseCard, valueFor, undefined, 'completed', actions);
   if (args.includes('--dry-run')) return JSON.stringify({ success: true, dryRun: true, profileId, botId: larkAppId, actions, card });
@@ -152,6 +163,7 @@ async function sendIncidentCard(ctx) {
   const sent = await execFile(binary, [
     'send', '--card-json', JSON.stringify(card),
     '--plugin-card-action', ctx.pluginId,
+    '--response-kind', 'final',
     ...buildSendMentionArgs(args, buildOwnerMentionArgs(owner)),
   ], { env: process.env, cwd: process.cwd(), encoding: 'utf8', timeout: 30_000, maxBuffer: 2 * 1024 * 1024 });
   const receipt = parseSendOutput(sent.stdout);

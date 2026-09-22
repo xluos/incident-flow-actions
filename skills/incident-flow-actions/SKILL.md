@@ -14,9 +14,11 @@ botmux incident-flow-actions:send \
   --owner-file '<owner-identity.json>'
 ```
 
-也可传 `--summary` 或 `--summary-file` 生成基础卡。`--profile <方案名>` 选择已配置方案；`--dry-run` 只生成预览，不发送消息。命令必须在有已验证请求人的 Botmux 会话中运行，卡片以当前机器人的身份发送。
+也可传 `--summary` 或 `--summary-file` 生成 schema 2.0 基础卡，正文、按钮和 @ 在同一张卡中发送。重复传 `--action <动作ID>` 可从当前方案选择本次适用的按钮；不传则保持方案原有按钮。不要显示不满足授权条件的动作。`--profile <方案名>` 选择已配置方案；`--dry-run` 只生成预览，不发送消息。命令必须在有已验证请求人的 Botmux 会话中运行，卡片以当前机器人的身份发送。
 
-负责人身份文件的 `repair_owner` 驱动 Markdown 中 `{{repair_owner}}` 和实际 mention。也支持重复传 `--mention <id或邮箱:展示名>`。直接响应真人且需要提醒原请求人时可加 `--mention-back`；后台交接不要自动 @ 交接机器人。未解析的负责人不得伪造真实 @。
+负责人身份文件的 `repair_owner` 驱动 Markdown 中 `{{repair_owner}}` 和实际 mention。也支持重复传 `--mention <id或邮箱:展示名>`。直接响应真人且需要提醒原请求人时可加 `--mention-back`；后台交接不要自动 @ 交接机器人。未解析的负责人不得伪造真实 @。`--no-mention` 会显式关闭包括负责人在内的通知，不能与 `--mention` 或 `--mention-back` 同用。
+
+先对最终 `summary`/`summary-file`/卡片正文执行回复风格检查，再发送。发送失败先确认错误及是否已有消息 ID，只修正失败项后重试同一份结果；不另发“结果在下一张卡片”等重复通知。成功后回读卡片并保存消息 ID。
 
 默认只有请求人可点击，明确需要共同决策时可追加 `--allow-user <ou_...|on_...>`。点击后的指令和目标采用发卡时的快照；修改配置只影响新卡。一个卡片接受一次选择。失败会显示错误，不能把“点击被接收”称为业务执行完成。
 

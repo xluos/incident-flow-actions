@@ -134,7 +134,7 @@ test('incident card derives owner rendering and mention from one identity artifa
   };
   const card = createSimpleResultCard({ title: '结论', summary: '**修复负责人：** {{repair_owner}}' });
 
-  assert.match(applyOwnerIdentity(card, owner).elements[0].content, /@汪睿麟/);
+  assert.match(applyOwnerIdentity(card, owner).body.elements[0].content, /@汪睿麟/);
   assert.deepEqual(buildOwnerMentionArgs(owner), [
     '--mention', 'wangruilin.bruce@bytedance.com:汪睿麟',
   ]);
@@ -152,7 +152,7 @@ test('incident card renders unresolved owner without inventing a mention', () =>
   };
   const card = createSimpleResultCard({ title: '结论', summary: '**修复负责人：** {{repair_owner}}' });
 
-  assert.match(applyOwnerIdentity(card, owner).elements[0].content, /未通知：ambiguous/);
+  assert.match(applyOwnerIdentity(card, owner).body.elements[0].content, /未通知：ambiguous/);
   assert.deepEqual(buildOwnerMentionArgs(owner), []);
 });
 
@@ -170,11 +170,11 @@ test('service entry detection follows installed symlinks', t => {
 test('repair action has a confirmation dialog and locked cards remove every action', () => {
   const valueFor = action => ({ action });
   const initial = renderActionCard(createSimpleResultCard({ title: '结论', summary: '内容' }), valueFor);
-  const buttons = initial.elements.at(-1).actions;
-  assert.ok(buttons.find(button => button.value.action === ACTIONS.repair).confirm);
+  const buttons = initial.body.elements.at(-1).columns.map(column => column.elements[0]);
+  assert.ok(buttons.find(button => button.behaviors[0].value.action === ACTIONS.repair).confirm);
   const locked = renderActionCard(initial, valueFor, ACTIONS.repair);
-  assert.equal(locked.elements.some(element => element.element_id === 'incident_flow_actions'), false);
-  assert.match(locked.elements.at(-1).content, /授权修复/);
+  assert.equal(locked.body.elements.some(element => element.element_id === 'incident_flow_actions'), false);
+  assert.match(locked.body.elements.at(-1).content, /授权修复/);
 });
 
 test('continuation triggers the original session directly without creating a schedule', async () => {
@@ -263,6 +263,20 @@ test('card selection is idempotent and only starts one continuation', async t =>
   assert.equal(calls, 1);
   assert.equal(first.body.ack.toast.type, 'success');
   assert.match(second.body.ack.toast.content, /无需重复操作/);
-  assert.equal(second.body.ack.card.elements.some(element => element.element_id === 'incident_flow_actions'), false);
-  assert.match(second.body.ack.card.elements.at(-1).content, /授权修复/);
+  assert.equal(second.body.ack.card.body.elements.some(element => element.element_id === 'incident_flow_actions'), false);
+  assert.match(second.body.ack.card.body.elements.at(-1).content, /授权修复/);
+});
+
+
+test('simple card supports the Botmux mention footer without splitting delivery', () => {
+  const card = renderActionCard(createSimpleResultCard({ title: '结果', summary: '原因和排查记录' }), action => ({ action }));
+  assert.equal(card.schema, '2.0');
+  assert.equal(card.elements, undefined);
+  assert.equal(card.body.elements[0].content, '原因和排查记录');
+  assert.equal(card.body.elements.some(e => e.element_id === 'botmux_reply_footer'), false);
+});
+
+test('explicit no-mention suppresses owner notifications and rejects conflicts', () => {
+  assert.deepEqual(buildSendMentionArgs(['--no-mention'], ['--mention', 'owner@example.com']), ['--no-mention']);
+  assert.throws(() => buildSendMentionArgs(['--no-mention', '--mention-back']), /cannot be combined/);
 });

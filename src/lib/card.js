@@ -65,9 +65,10 @@ function statusElement(selectedAction, state, actions) {
 
 export function createSimpleResultCard({ title, summary }) {
   return {
+    schema: '2.0',
     config: { wide_screen_mode: true },
     header: { template: 'blue', title: { tag: 'plain_text', content: title } },
-    elements: [{ tag: 'markdown', content: summary }],
+    body: { elements: [{ tag: 'markdown', content: summary }] },
   };
 }
 

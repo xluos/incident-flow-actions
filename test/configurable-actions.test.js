@@ -120,6 +120,13 @@ test('send dry-run resolves bot profile without sending or persisting secrets', 
   const result = JSON.parse(await handlers['incident-flow-actions:send'].run({ args: ['--incident-id', 'test', '--summary', 'Preview', '--dry-run'], pluginId: 'incident-flow-actions', api: { config: { get: key => key === 'workflowConfig' ? config : undefined, set: () => assert.fail('dry-run must not write') } } }));
   assert.equal(result.dryRun, true);
   assert.deepEqual(result.actions.map(action => action.id), ['inspect', 'review']);
+  const ctx = { args: ['--incident-id', 'test', '--summary', 'Preview', '--action', 'review', '--dry-run'], pluginId: 'incident-flow-actions', api: { config: { get: key => key === 'workflowConfig' ? config : undefined, set: () => assert.fail('dry-run must not write') } } };
+  const selected = JSON.parse(await handlers['incident-flow-actions:send'].run(ctx));
+  assert.deepEqual(selected.actions.map(action => action.id), ['review']);
+  assert.equal(selected.card.schema, '2.0');
+  assert.equal(selected.card.body.elements.at(-1).columns.length, 1);
+  await assert.rejects(() => handlers['incident-flow-actions:send'].run({ ...ctx, args: [...ctx.args, '--action', 'unknown'] }), /unknown_action/);
+
 });
 
 
